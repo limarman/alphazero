@@ -1,11 +1,16 @@
+import time
+from multiprocessing import Queue, Lock, Event, Value, Process, Manager
+
 from typing import NamedTuple
 import numpy as np
 import torch
 import os
 
+import psutil
+
 from model import SimpleTakeAwayModel, TicTacToeModel
 from montecarlo import TakeAwayState
-from selfplay import self_play, play_tournament
+from selfplay import self_play, play_tournament, async_self_play
 import torch.nn.functional as F
 
 from ticktactoe import TicTacToeState
@@ -42,7 +47,6 @@ class Databuffer:
             self.pos = self.pos % self.buffer_size
 
     def sample_batch(self, batch_size: int):
-
         if self.full:
             batch_inds = np.random.randint(0, self.buffer_size-1, size=batch_size)
         else:
@@ -74,6 +78,49 @@ def save_model(model, name):
 
     torch.save(model, path)
 
+
+def self_play_worker(task_queue, result_queue, ready_event, worker_id, game_start_state, data_queue, n_selfplays):
+    while True:
+        states, pis, winners = async_self_play(task_queue=task_queue, result_queue=result_queue,
+                                               ready_event=ready_event, worker_id=worker_id,
+                                               start_state=game_start_state, mcts_simulations=50, temperature_tau=1)
+
+        data_queue.put((states, pis, winners))
+        #print(data_queue.qsize())
+
+        if data_queue.qsize() >= n_selfplays:
+            #print(f"Terminating worker {worker_id}")
+            break
+
+        #with counter.get_lock():
+        #    counter.value += 1
+
+def nn_worker(task_queue, result_queues, ready_events, model):
+    while True:
+        batch = []
+        while len(batch) < 8 and not task_queue.empty():
+            worker_id, state = task_queue.get()
+            batch.append((worker_id, state))
+
+        if len(batch) != 0:
+            #print(len(batch))
+            with torch.no_grad():
+                # create and pass the batch of data
+                states = np.stack([model.construct_state_representation(state) for worker_id, state in batch])
+                states = torch.tensor(states, requires_grad=False)
+                probs_logits, vals = model.forward(states)
+                probss = F.softmax(probs_logits, dim=1)
+
+            for (worker_id, _), probs, val in zip(batch, probss, vals):
+
+                prob_dict = {model.map_index_to_actionname(index): probs[index] for index in
+                             range(len(probs))}
+
+                result_queues[worker_id].put((worker_id, (prob_dict, val)))
+                #time.sleep(2)
+                ready_events[worker_id].set()  # Signal that NN processing is done for this worker
+
+
 if __name__ == '__main__':
     
     n_selfplays = 100
@@ -94,20 +141,21 @@ if __name__ == '__main__':
 
     optimizer = torch.optim.Adam(params=trained_model.parameters(), lr=1e-3, weight_decay=1e-4)
 
+    #databuffer = Databuffer(buffer_size=buffer_size, state_shape=(2,3,3), action_shape=(9,))
     databuffer = Databuffer(buffer_size=buffer_size, state_shape=(2,3,3), action_shape=(9,))
 
-    gen = 1
+    gen = 0
 
     for g in range(n_epochs):
 
-        print(f"Generation {gen}")
+        print(f"Epoch {g+1} / Generation {gen}")
 
         for i in range(n_iterations):
-            
+
             if i % 100 == 0:
                 print(f"Starting Iteration {i}...")
 
-            for j in range(n_selfplays):
+            """for j in range(n_selfplays):
                 states, pis, winners = self_play(game_start_state, data_generating_model, mcts_simulations=100, temperature_tau=1)
 
                 for state, pi, z in zip(states, pis, winners):
@@ -118,8 +166,79 @@ if __name__ == '__main__':
                     for key,value in pi.items():
                         full_pi[trained_model.map_actionname_to_index(key)] = value
 
+                    databuffer.add_element(trained_model.construct_state_representation(state), full_pi, z)
+            """
+
+            # ASYNC VARIANT
+            no_self_play_workers = 8
+            no_nn_workers = 1
+
+            task_queue = Queue()
+            result_queues = [Queue() for _ in range(no_self_play_workers)]
+            ready_events = [Event() for _ in range(no_self_play_workers)]
+
+            data_queue = Manager().Queue()
+            #buffer_lock = Lock()
+            #self_play_counter = Value('i', 0)
+
+            self_play_start = time.time()
+            self_play_workers = [Process(target=self_play_worker, args=(
+            task_queue, result_queues[i], ready_events[i], i, game_start_state, data_queue, n_selfplays))
+                                 for i in range(no_self_play_workers)]
+            for worker in self_play_workers:
+                worker.start()
+
+            # Start NN worker
+            nn_workers = [Process(target=nn_worker, args=(task_queue, result_queues, ready_events, data_generating_model))
+                          for i in range(no_nn_workers)]
+            for worker in nn_workers:
+                worker.start()
+                psutil.Process(worker.pid).nice(psutil.HIGH_PRIORITY_CLASS)  # Set high priority
+
+            """try:
+                while True:
+                    time.sleep(1)  # Main thread can perform other tasks or monitoring
+                    #print(f"Self-plays finished: {data_queue.qsize()}")
+                    if data_queue.qsize() >= n_selfplays:
+                        break
+            except KeyboardInterrupt:
+                pass
+            finally:
+                for worker in self_play_workers:
+                    worker.join()
+                for worker in nn_workers:
+                    worker.terminate()
+                for worker in nn_workers:
+                    worker.join()"""
+
+            for worker in self_play_workers:
+                worker.join()
+            for worker in nn_workers:
+                worker.terminate()
+            for worker in nn_workers:
+                worker.join()
+
+
+            self_play_finish = time.time()
+            print(f"Selfplay duration: {self_play_finish - self_play_start}")
+            print(f"Selfplay/s: {data_queue.qsize() / (self_play_finish - self_play_start)}")
+
+            #print(data_queue.qsize())
+
+            # Collect data from result queue
+            while not data_queue.empty():
+                states, pis, winners = data_queue.get()
+                data_queue.qsize()
+                for state, pi, z in zip(states, pis, winners):
+                    # generate the full pi for the agent (including moves that are not an option)
+                    full_pi = np.zeros(len(game_start_state.action_space))
+
+                    for key, value in pi.items():
+                        full_pi[trained_model.map_actionname_to_index(key)] = value
 
                     databuffer.add_element(trained_model.construct_state_representation(state), full_pi, z)
+
+            #print(data_queue.qsize())
 
             for j in range(n_gradient_steps):
 
@@ -146,13 +265,13 @@ if __name__ == '__main__':
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-        
+
 
         # make tournament to see whether the model has improved
-        print(f"Epoch {g} evaluate model...")
-        value_new_model_first = play_tournament(trained_model, data_generating_model, 50, game_start_state, mcts_simulations=100)
+        print(f"Epoch {g+1} evaluate model...")
+        value_new_model_first = play_tournament(trained_model, data_generating_model, 25, game_start_state, mcts_simulations=50)
         print(f"Score First: {value_new_model_first}")
-        value_new_model_second = 1- play_tournament(data_generating_model, trained_model, 50, game_start_state, mcts_simulations=100)
+        value_new_model_second = 1- play_tournament(data_generating_model, trained_model, 25, game_start_state, mcts_simulations=50)
         print(f"Score Second: {value_new_model_second}")
 
         if 0.5*value_new_model_first + 0.5*value_new_model_second >= 0.55:

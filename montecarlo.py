@@ -1,7 +1,6 @@
 import copy
 import numpy as np
 
-
 class MonteCarloTree:
 
     def __init__(self, state, parent=None, root_node=False, model=None, dirichlet_alpha=None) -> None:
@@ -89,8 +88,6 @@ class MonteCarloTree:
 
         return max_succ, self.succ_dict[max_succ]['succ']
 
-
-        
     def expand_node(self, model):
         if self.expanded:
             raise ValueError("Node is already expanded!")            
@@ -100,6 +97,7 @@ class MonteCarloTree:
         else:
             actions, succ_states = self.state.get_possible_successors()
             priors, self.network_value = model.evaluate(self.state)
+
             prob_sum = 0
             for action, next_state in zip(actions, succ_states):
                 self.succ_dict[action] = {'q_val': 0, 'cum_val': 0, 'visit_count': 0, 'succ': MonteCarloTree(next_state, self), 'prior': priors[action]}
@@ -111,6 +109,54 @@ class MonteCarloTree:
 
         self.expanded = True
 
+
+class AsyncMonteCarloTree(MonteCarloTree):
+    def __init__(self, state, task_queue, result_queue, ready_event, worker_id, parent=None, root_node=False, dirichlet_alpha=None) -> None:
+
+        self.task_queue = task_queue
+        self.result_queue = result_queue
+        self.ready_event = ready_event
+        self.worker_id = worker_id
+
+        super().__init__(state=state, parent=parent, root_node=root_node, model="NONE",
+                         dirichlet_alpha=dirichlet_alpha)
+
+    def expand_node(self, model):
+
+        if self.expanded:
+            raise ValueError("Node is already expanded!")
+
+        if self.state.is_finished():
+            self.network_value = self.state.get_final_value()
+        else:
+            actions, succ_states = self.state.get_possible_successors()
+            #priors, self.network_value = model.evaluate(self.state)
+
+            self.task_queue.put((self.worker_id, self.state))
+            self.ready_event.clear()
+            #print("Entered Wait...")
+            self.ready_event.wait()
+            #print("Exited Wait...")
+
+            _, nn_output = self.result_queue.get()
+            priors, self.network_value = nn_output
+
+            prob_sum = 0
+            for action, next_state in zip(actions, succ_states):
+                self.succ_dict[action] = {'q_val': 0, 'cum_val': 0, 'visit_count': 0,
+                                          'succ': AsyncMonteCarloTree(state=next_state, parent=self,
+                                                                      task_queue=self.task_queue,
+                                                                      result_queue=self.result_queue,
+                                                                      ready_event=self.ready_event,
+                                                                      worker_id=self.worker_id),
+                                          'prior': priors[action]}
+                prob_sum += priors[action]
+
+            # normalize the prior distribution over the successors
+            for succ in self.succ_dict:
+                self.succ_dict[succ]['prior'] = self.succ_dict[succ]['prior'] / prob_sum
+
+        self.expanded = True
 
 class TakeAwayState:
     def __init__(self, match_no):

@@ -31,7 +31,7 @@ if __name__ == '__main__':
 
     game_state = TicTacToeState()
 
-    model = load_model("models/generation_6.pt")
+    model = load_model("models/generation_8.pt")
 
     turn = 1
 

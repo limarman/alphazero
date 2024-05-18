@@ -1,9 +1,53 @@
-from montecarlo import MonteCarloTree, DummyModel, TakeAwayState
+from montecarlo import MonteCarloTree, DummyModel, TakeAwayState, AsyncMonteCarloTree
 import numpy as np
 from model import SimpleTakeAwayModel
 
-def self_play(start_state, model, mcts_simulations=500, temperature_tau=1, dirichlet_alpha=0.5):
+def async_self_play(start_state, task_queue, result_queue, ready_event, worker_id,
+                    mcts_simulations=500, temperature_tau=1, dirichlet_alpha=0.5):
 
+    state = start_state
+
+    states = []
+    pis = []
+    winners = []
+
+    # initialize MCTS
+    tree = AsyncMonteCarloTree(state=state, root_node=True, dirichlet_alpha=dirichlet_alpha,
+                               task_queue=task_queue, result_queue=result_queue, ready_event=ready_event,
+                               worker_id=worker_id)
+
+    while not state.is_finished():
+
+        states.append(state)
+
+        # make MCT simulations
+        for _ in range(mcts_simulations):
+            tree.simulate(model='NONE')
+
+        # choose next selfplay move
+        actions, probabilities = get_actions_and_probabilities(tree.succ_dict, temperature_tau)
+        next_action = actions[np.random.choice(len(actions), p=probabilities)]
+
+        # add the prior labels
+        pis.append({action: prob for action, prob in zip(actions, probabilities)})
+
+        tree = tree.succ_dict[next_action]['succ']
+        tree.promote_to_root_node(dirichlet_alpha, 'NONE')
+
+        state = tree.state
+
+    # compute the value labels - adjust for perspective switch (assuming alternating turns here!)
+    z = state.get_final_value()
+    winners = [1 - z] * len(states)
+    for i in range(len(states) - 2, 0, -2):
+        winners[i] = z
+
+    states.append(state)
+
+    return states, pis, winners
+
+
+def self_play(start_state, model, mcts_simulations=500, temperature_tau=1, dirichlet_alpha=0.5):
 
     state = start_state
 
