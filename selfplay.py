@@ -91,8 +91,15 @@ def self_play(start_state, model, mcts_simulations=500, temperature_tau=1, diric
 
 def get_actions_and_probabilities(successor_dict, temperature_tau):
 
-    probabilities = np.array([entry['visit_count']**(1/temperature_tau) for _, entry in successor_dict.items()])
-    probabilities /= np.sum(probabilities)
+    # For numerical stability just take the argmax
+    if temperature_tau == 0:
+        visit_counts = np.array([entry['visit_count'] for _, entry in successor_dict.items()])
+        probabilities = np.zeros_like(visit_counts)
+        probabilities[np.argmax(visit_counts)] = 1
+    else:
+        probabilities = np.array([entry['visit_count']**(1/temperature_tau) for _, entry in successor_dict.items()])
+        probabilities /= np.sum(probabilities)
+
     actions = list(successor_dict.keys())
 
     return actions, probabilities

@@ -8,7 +8,8 @@ import os
 
 import psutil
 
-from model import SimpleTakeAwayModel, TicTacToeModel
+from connect4 import Connect4State
+from model import SimpleTakeAwayModel, TicTacToeModel, Connect4Model
 from montecarlo import TakeAwayState
 from selfplay import self_play, play_tournament, async_self_play
 import torch.nn.functional as F
@@ -83,7 +84,7 @@ def self_play_worker(task_queue, result_queue, ready_event, worker_id, game_star
     while True:
         states, pis, winners = async_self_play(task_queue=task_queue, result_queue=result_queue,
                                                ready_event=ready_event, worker_id=worker_id,
-                                               start_state=game_start_state, mcts_simulations=50, temperature_tau=1)
+                                               start_state=game_start_state, mcts_simulations=100, temperature_tau=1)
 
         data_queue.put((states, pis, winners))
         #print(data_queue.qsize())
@@ -123,18 +124,18 @@ def nn_worker(task_queue, result_queues, ready_events, model):
 
 if __name__ == '__main__':
     
-    n_selfplays = 100
+    n_selfplays = 50
     n_gradient_steps = 5000 #10000
     n_iterations = 1
     n_epochs = 100
 
-    buffer_size = 3000
+    buffer_size = 10000 #6000 #3000
     batch_size = 128
 
-    game_start_state = TicTacToeState() #TakeAwayState(20)
+    game_start_state = Connect4State() #TicTacToeState() #TakeAwayState(20)
 
-    trained_model = TicTacToeModel() # SimpleTakeAwayModel()
-    data_generating_model = TicTacToeModel() # SimpleTakeAwayModel()
+    trained_model = Connect4Model() #TicTacToeModel() # SimpleTakeAwayModel()
+    data_generating_model = Connect4Model() # TicTacToeModel() # SimpleTakeAwayModel()
 
     # initialize the same
     data_generating_model.load_state_dict(trained_model.state_dict())
@@ -142,7 +143,7 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(params=trained_model.parameters(), lr=1e-3, weight_decay=1e-4)
 
     #databuffer = Databuffer(buffer_size=buffer_size, state_shape=(2,3,3), action_shape=(9,))
-    databuffer = Databuffer(buffer_size=buffer_size, state_shape=(2,3,3), action_shape=(9,))
+    databuffer = Databuffer(buffer_size=buffer_size, state_shape=(2,6,7), action_shape=(7,))
 
     gen = 0
 

@@ -1,5 +1,7 @@
 import numpy as np
 import torch
+
+from connect4 import Connect4State
 from montecarlo import MonteCarloTree, TakeAwayState
 from selfplay import get_actions_and_probabilities
 from ticktactoe import TicTacToeState
@@ -29,11 +31,13 @@ if __name__ == '__main__':
 
     # print(torch.nn.functional.cross_entropy(p, p_target))
 
-    game_state = TicTacToeState()
+    #game_state = TicTacToeState()
+    game_state = Connect4State()
 
-    model = load_model("models/generation_8.pt")
+    #model = load_model("Connect4/buffer3000/generation_15.pt")
+    model = load_model("models/generation_39.pt")
 
-    turn = 1
+    turn = 0
 
     while not game_state.is_finished():
 
@@ -42,10 +46,10 @@ if __name__ == '__main__':
         if turn == 0:
             mct = MonteCarloTree(parent=None, state=game_state, root_node=True, model=model, dirichlet_alpha=None)
 
-            for i in range(100):
+            for i in range(3000):
                 mct.simulate(model=model)
 
-            actions, probs = get_actions_and_probabilities(mct.succ_dict, temperature_tau=0.01)
+            actions, probs = get_actions_and_probabilities(mct.succ_dict, temperature_tau=0)
             action = actions[np.random.choice(len(actions), p=probs)]
 
             #print(action, probs)
@@ -62,11 +66,11 @@ if __name__ == '__main__':
 
         elif turn == 1:
             while(True):
-                action = input("Give your action as index (0-8): ")
+                action = input("Give your action as index (0-6): ")
                 try:
                     game_state.apply_action(model.map_index_to_actionname(int(action)))
                     break
-                except ValueError:
+                except Exception:
                     print("This was an invalid move! Try again.")
 
             turn = 0
