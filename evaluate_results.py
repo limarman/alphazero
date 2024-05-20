@@ -35,7 +35,7 @@ if __name__ == '__main__':
     game_state = Connect4State()
 
     #model = load_model("Connect4/buffer3000/generation_15.pt")
-    model = load_model("models/generation_39.pt")
+    model = load_model("Connect4/buffer10k/generation_39.pt")
 
     turn = 0
 
