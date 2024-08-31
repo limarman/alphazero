@@ -88,6 +88,14 @@ class Connect4State:
         else:
             return 0
 
+    def get_alike_positions(self):
+        sym_state = copy.deepcopy(self)
+        sym_state.game_state[:, 0] = self.game_state[:, -1]
+        sym_state.game_state[:, 1] = self.game_state[:, -2]
+        sym_state.game_state[:, 2] = self.game_state[:, -3]
+
+        return [self, sym_state]
+
 
 if __name__ == '__main__':
     game = Connect4State()

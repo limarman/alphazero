@@ -9,7 +9,7 @@ import os
 import psutil
 
 from connect4 import Connect4State
-from model import SimpleTakeAwayModel, TicTacToeModel, Connect4Model
+from model import SimpleTakeAwayModel, TicTacToeModel, Connect4Model, Connect4Model_64conv, Connect4Model_128conv
 from montecarlo import TakeAwayState
 from selfplay import self_play, play_tournament, async_self_play
 import torch.nn.functional as F
@@ -123,29 +123,43 @@ def nn_worker(task_queue, result_queues, ready_events, model):
 
 
 if __name__ == '__main__':
-    
-    n_selfplays = 50
+
+    # Settings for resuming training procedure
+    new_arch = True
+    load_model_path = "Connect4/buffer30k_64conv/generation_5.pt"
+    add_gen = 0
+    n_restart_selfplays = 300
+
+    n_selfplays = 100
     n_gradient_steps = 5000 #10000
     n_iterations = 1
     n_epochs = 100
 
-    buffer_size = 10000 #6000 #3000
+    buffer_size = 30000 #10000 #6000 #3000
     batch_size = 128
 
     game_start_state = Connect4State() #TicTacToeState() #TakeAwayState(20)
 
-    trained_model = Connect4Model() #TicTacToeModel() # SimpleTakeAwayModel()
-    data_generating_model = Connect4Model() # TicTacToeModel() # SimpleTakeAwayModel()
+    ModelArchitecture = Connect4Model_128conv
 
-    # initialize the same
-    data_generating_model.load_state_dict(trained_model.state_dict())
+    if load_model_path is not None:
+        data_generating_model = torch.load(load_model_path)
+    else:
+        data_generating_model = ModelArchitecture()
+
+    trained_model = ModelArchitecture() #Connect4Model() # TicTacToeModel() # SimpleTakeAwayModel()
+
+    if not new_arch or load_model_path is None:
+
+        # initialize the same
+        trained_model.load_state_dict(data_generating_model.state_dict())
 
     optimizer = torch.optim.Adam(params=trained_model.parameters(), lr=1e-3, weight_decay=1e-4)
 
     #databuffer = Databuffer(buffer_size=buffer_size, state_shape=(2,3,3), action_shape=(9,))
     databuffer = Databuffer(buffer_size=buffer_size, state_shape=(2,6,7), action_shape=(7,))
 
-    gen = 0
+    gen = 0 if load_model_path is None else add_gen
 
     for g in range(n_epochs):
 
@@ -183,9 +197,10 @@ if __name__ == '__main__':
             #self_play_counter = Value('i', 0)
 
             self_play_start = time.time()
+
             self_play_workers = [Process(target=self_play_worker, args=(
-            task_queue, result_queues[i], ready_events[i], i, game_start_state, data_queue, n_selfplays))
-                                 for i in range(no_self_play_workers)]
+            task_queue, result_queues[j], ready_events[j], j, game_start_state, data_queue, n_restart_selfplays if i == 0 and g == 0 and load_model_path is not None else n_selfplays))
+                                 for j in range(no_self_play_workers)]
             for worker in self_play_workers:
                 worker.start()
 
@@ -237,7 +252,8 @@ if __name__ == '__main__':
                     for key, value in pi.items():
                         full_pi[trained_model.map_actionname_to_index(key)] = value
 
-                    databuffer.add_element(trained_model.construct_state_representation(state), full_pi, z)
+                    for state, pi in trained_model.get_alike_state_data(state, full_pi):
+                        databuffer.add_element(trained_model.construct_state_representation(state), pi, z)
 
             #print(data_queue.qsize())
 
@@ -270,12 +286,15 @@ if __name__ == '__main__':
 
         # make tournament to see whether the model has improved
         print(f"Epoch {g+1} evaluate model...")
-        value_new_model_first = play_tournament(trained_model, data_generating_model, 25, game_start_state, mcts_simulations=50)
+        value_new_model_first = play_tournament(trained_model, data_generating_model, 25, game_start_state, mcts_simulations=100)
         print(f"Score First: {value_new_model_first}")
-        value_new_model_second = 1- play_tournament(data_generating_model, trained_model, 25, game_start_state, mcts_simulations=50)
+        value_new_model_second = 1- play_tournament(data_generating_model, trained_model, 25, game_start_state, mcts_simulations=100)
         print(f"Score Second: {value_new_model_second}")
 
         if 0.5*value_new_model_first + 0.5*value_new_model_second >= 0.55:
+            if load_model_path is not None and new_arch and add_gen==gen:
+                data_generating_model = ModelArchitecture()
+
             data_generating_model.load_state_dict(trained_model.state_dict())
             gen += 1
             save_model(trained_model, f"generation_{gen}.pt")
