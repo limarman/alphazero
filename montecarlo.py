@@ -230,8 +230,6 @@ class DummyModel:
 
 
 if __name__ == '__main__':
-    #def ucb_func(prior, visit_count, q_val):
-    #    return q_val + prior / (visit_count + 1)
     
     state = TakeAwayState(10)
 

@@ -14,45 +14,10 @@ def load_model(path):
 
 if __name__ == '__main__':
 
-    #model = load_model("models/generation_5.pt")
-    #game_state = TakeAwayState(12)
-
-    #print(f"MODEL OUTPUT: {model.evaluate(game_state)}")
-
-
-    #mct = MonteCarloTree(parent=None, state=game_state, root_node=True, model=model, dirichlet_alpha=None)
-
-    #for i in range(100):
-    #    mct.simulate(model=model)
-
-    #print(f"MCT ROOT NODE: {mct.succ_dict}")
-
-    # p = torch.tensor([0.2, 0.3, 0.5])
-
-    # p_target = torch.tensor([0.2, 0.3, 0.5])
-
-    # print(torch.nn.functional.cross_entropy(p, p_target))
-
     #game_state = TicTacToeState()
     game_state = Connect4State()
 
-    #model = load_model("Connect4/buffer3000/generation_15.pt")
-    #model = load_model("Connect4/buffer10k/generation_43.pt")
-    #model = load_model("Connect4/buffer30k_addFC/generation_31.pt")
-    #model = load_model("Connect4/buffer30k_4conv/generation_40.pt")
-    #model = load_model("Connect4/buffer30k_64conv/generation_5.pt")
     model = load_model("models/generation_10.pt")
-
-    #old_model = load_model("Connect4/buffer10k/generation_30.pt")
-
-    #states = [copy.deepcopy(game_state).apply_action(i) for i in range(7)]
-
-    #for idx, start_state in enumerate(states):
-    #    print(f"Tournament Start for position {idx}...")
-    #    print(f"Score as first: {play_tournament(model, old_model, start_state=start_state, no_games=1, mcts_simulations=100, temperature=0)}")
-    #    print(f"Score as second: {1-play_tournament(old_model, model, start_state=start_state, no_games=1, mcts_simulations=100, temperature=0)}")
-    #print(play_tournament(model, old_model, start_state=game_state, no_games=1, temperature=0, mcts_simulations=1))
-
 
     # arbitrary position
     game_state.game_state = np.array([[-0., -0., -0.,  0., -0.,  0., -0.],
@@ -80,8 +45,6 @@ if __name__ == '__main__':
 
             actions, probs = get_actions_and_probabilities(mct.succ_dict, temperature_tau=0)
             action = actions[np.random.choice(len(actions), p=probs)]
-
-            #print(action, probs)
 
             print(f"MCT:")
             print(f"Expected Value: {mct.succ_dict[action]['q_val']}")
